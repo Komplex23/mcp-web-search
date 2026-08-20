@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """
 MCP Web Search Server
-Supports SSE and Streamable HTTP transports, compatible with AIPI and Claude Desktop.
+Exposes two spec-compliant remote transports so it works with AIPI, Claude, Cursor, etc.:
+  - Streamable HTTP (recommended)  ->  POST/GET/DELETE  /mcp
+  - SSE (legacy/deprecated)        ->  GET /sse  +  POST /messages/
+Tools: web_search, fetch_page
 """
 import os
 import re
-import json
-import asyncio
+import contextlib
+from collections.abc import AsyncIterator
+
 import httpx
-from typing import Any
+import uvicorn
 from mcp.server import Server
 from mcp import types
 from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 from starlette.responses import Response, JSONResponse
@@ -19,7 +25,7 @@ from starlette.requests import Request
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-import uvicorn
+from starlette.types import Scope, Receive, Send
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
@@ -27,7 +33,6 @@ MCP_API_KEY    = os.getenv("MCP_API_KEY", "")
 PORT           = int(os.getenv("PORT", "3000"))
 
 # ─── Search Functions ─────────────────────────────────────────────────────────
-
 async def serper_search(query: str, count: int = 5) -> list[dict]:
     """Search using Serper.dev (Google results, 2500 free/month)."""
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -53,24 +58,23 @@ async def duckduckgo_search(query: str, count: int = 5) -> list[dict]:
         )
         r.raise_for_status()
         data = r.json()
-
     results = []
     if data.get("AbstractText") and data.get("AbstractURL"):
         results.append({"title": data.get("AbstractSource", query), "url": data["AbstractURL"], "description": data["AbstractText"]})
     for t in data.get("RelatedTopics", []):
-        if len(results) >= count: break
+        if len(results) >= count:
+            break
         if t.get("FirstURL") and t.get("Text"):
             results.append({"title": t["Text"][:60], "url": t["FirstURL"], "description": t["Text"]})
     return results[:count]
 
-async def web_search(query: str, count: int = 5) -> list[dict]:
+async def do_web_search(query: str, count: int = 5) -> list[dict]:
     if SERPER_API_KEY:
         return await serper_search(query, count)
     return await duckduckgo_search(query, count)
 
 # ─── MCP Tool Handlers ────────────────────────────────────────────────────────
-
-async def handle_list_tools(ctx, params):
+async def handle_list_tools(ctx, params) -> types.ListToolsResult:
     return types.ListToolsResult(tools=[
         types.Tool(
             name="web_search",
@@ -95,7 +99,7 @@ async def handle_list_tools(ctx, params):
         ),
     ])
 
-async def handle_call_tool(ctx, params: types.CallToolRequestParams):
+async def handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
     name      = params.name
     arguments = params.arguments or {}
 
@@ -103,7 +107,7 @@ async def handle_call_tool(ctx, params: types.CallToolRequestParams):
         query = arguments.get("query", "")
         count = int(arguments.get("count", 5))
         try:
-            results = await web_search(query, count)
+            results = await do_web_search(query, count)
             if not results:
                 return types.CallToolResult(content=[types.TextContent(type="text", text=f'No results for: "{query}"')])
             body = "\n\n---\n\n".join(
@@ -111,7 +115,7 @@ async def handle_call_tool(ctx, params: types.CallToolRequestParams):
             )
             return types.CallToolResult(content=[types.TextContent(type="text", text=f'Search results for: "{query}"\n\n{body}')])
         except Exception as e:
-            return types.CallToolResult(content=[types.TextContent(type="text", text=f"Search error: {e}")])
+            return types.CallToolResult(content=[types.TextContent(type="text", text=f"Search error: {e}")], isError=True)
 
     if name == "fetch_page":
         url = arguments.get("url", "")
@@ -127,15 +131,25 @@ async def handle_call_tool(ctx, params: types.CallToolRequestParams):
                     text = text[:8000] + "\n\n[truncated]"
                 return types.CallToolResult(content=[types.TextContent(type="text", text=f"Content from {url}:\n\n{text}")])
         except Exception as e:
-            return types.CallToolResult(content=[types.TextContent(type="text", text=f"Fetch error: {e}")])
+            return types.CallToolResult(content=[types.TextContent(type="text", text=f"Fetch error: {e}")], isError=True)
 
-    raise ValueError(f"Unknown tool: {name}")
+    return types.CallToolResult(content=[types.TextContent(type="text", text=f"Unknown tool: {name}")], isError=True)
 
-# ─── MCP Server ───────────────────────────────────────────────────────────────
+# ─── MCP Server instance ──────────────────────────────────────────────────────
 mcp = Server(name="mcp-web-search", version="1.0.0",
              on_list_tools=handle_list_tools, on_call_tool=handle_call_tool)
 
-# ─── SSE Transport ────────────────────────────────────────────────────────────
+# ─── Streamable HTTP transport (official SDK, stateless) ──────────────────────
+session_manager = StreamableHTTPSessionManager(
+    app=mcp,
+    json_response=True,   # return plain JSON responses (simpler for HTTP clients)
+    stateless=True,       # no session id round-trips required — ideal for AIPI
+)
+
+async def handle_streamable_http(scope: Scope, receive: Receive, send: Send) -> None:
+    await session_manager.handle_request(scope, receive, send)
+
+# ─── SSE transport (legacy) ───────────────────────────────────────────────────
 sse = SseServerTransport("/messages/")
 
 async def handle_sse(request: Request) -> Response:
@@ -143,88 +157,31 @@ async def handle_sse(request: Request) -> Response:
         await mcp.run(streams[0], streams[1], mcp.create_initialization_options())
     return Response()
 
-# ─── Streamable HTTP Transport (stateless) ───────────────────────────────────
-async def handle_mcp_post(request: Request) -> Response:
-    """Stateless Streamable HTTP — each request is self-contained."""
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"jsonrpc": "2.0", "error": {"code": -32700, "message": "Parse error"}, "id": None}, status_code=400)
-
-    method = body.get("method", "")
-    req_id = body.get("id")
-
-    # Handle initialize
-    if method == "initialize":
-        return JSONResponse({
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "mcp-web-search", "version": "1.0.0"},
-            }
-        })
-
-    # Handle tools/list
-    if method == "tools/list":
-        tools_result = await handle_list_tools(None, None)
-        tools = [
-            {
-                "name": t.name,
-                "description": t.description,
-                "inputSchema": t.input_schema,
-            }
-            for t in tools_result.tools
-        ]
-        return JSONResponse({"jsonrpc": "2.0", "id": req_id, "result": {"tools": tools}})
-
-    # Handle tools/call
-    if method == "tools/call":
-        params = body.get("params", {})
-        tool_params = types.CallToolRequestParams(name=params.get("name", ""), arguments=params.get("arguments", {}))
-        result = await handle_call_tool(None, tool_params)
-        content = [{"type": c.type, "text": c.text} for c in result.content if hasattr(c, "text")]
-        return JSONResponse({"jsonrpc": "2.0", "id": req_id, "result": {"content": content}})
-
-    # Unknown method
-    return JSONResponse({
-        "jsonrpc": "2.0",
-        "id": req_id,
-        "error": {"code": -32601, "message": f"Method not found: {method}"}
-    }, status_code=404)
-
 # ─── Health Check ─────────────────────────────────────────────────────────────
 async def health(request: Request) -> JSONResponse:
     return JSONResponse({
         "name": "mcp-web-search",
         "version": "1.0.0",
-        "transport": ["SSE (/sse)", "Streamable HTTP (/mcp)"],
+        "transport": ["Streamable HTTP (/mcp)", "SSE (/sse)"],
         "searchProvider": "Serper.dev (Google)" if SERPER_API_KEY else "DuckDuckGo (fallback)",
         "tools": ["web_search", "fetch_page"],
     })
 
-# ─── API Key Authentication ───────────────────────────────────────────────────
+# ─── Optional API Key Authentication ──────────────────────────────────────────
 class ApiKeyMiddleware(BaseHTTPMiddleware):
     """
-    Optional API key authentication.
-    Only enforced when the MCP_API_KEY environment variable is set.
-    Accepts the key via any of:
+    Only enforced when MCP_API_KEY env var is set. Accepts the key via:
       - Authorization: Bearer <key>
       - X-API-Key: <key>
-      - ?api_key=<key>  query parameter (for SSE clients that can't send headers)
-    The health check (GET /) and CORS preflight (OPTIONS) are always allowed.
+      - ?api_key=<key> query param (for clients that can't send headers)
+    Health check (GET /) and CORS preflight (OPTIONS) are always allowed.
     """
     async def dispatch(self, request: Request, call_next):
-        # No key configured → auth disabled, allow everything
         if not MCP_API_KEY:
             return await call_next(request)
-
-        # Always allow health check and CORS preflight
         if request.url.path == "/" or request.method == "OPTIONS":
             return await call_next(request)
 
-        # Extract provided key from header or query param
         provided = None
         auth = request.headers.get("authorization", "")
         if auth.lower().startswith("bearer "):
@@ -240,17 +197,25 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
                  "error": {"code": -32001, "message": "Unauthorized: invalid or missing API key"}},
                 status_code=401,
             )
-
         return await call_next(request)
+
+# ─── Lifespan: run the streamable session manager ─────────────────────────────
+@contextlib.asynccontextmanager
+async def lifespan(app: Starlette) -> AsyncIterator[None]:
+    async with session_manager.run():
+        print("✅ Streamable HTTP session manager started")
+        yield
+        print("⏹  Streamable HTTP session manager stopped")
 
 # ─── Starlette App ────────────────────────────────────────────────────────────
 app = Starlette(
     debug=False,
     routes=[
-        Route("/",         health,          methods=["GET"]),
-        Route("/sse",      handle_sse,      methods=["GET"]),
+        Route("/",          health,     methods=["GET"]),
+        Route("/sse",       handle_sse, methods=["GET"]),
         Mount("/messages/", app=sse.handle_post_message),
-        Route("/mcp",      handle_mcp_post, methods=["POST"]),
+        # Streamable HTTP handles POST + GET + DELETE on both /mcp and /mcp/
+        Mount("/mcp",       app=handle_streamable_http),
     ],
     middleware=[
         Middleware(
@@ -258,24 +223,45 @@ app = Starlette(
             allow_origins=["*"],
             allow_methods=["*"],
             allow_headers=["*"],
-            expose_headers=["mcp-session-id", "Mcp-Session-Id"],
+            expose_headers=["mcp-session-id", "Mcp-Session-Id", "mcp-protocol-version"],
         ),
         Middleware(ApiKeyMiddleware),
     ],
+    lifespan=lifespan,
 )
+
+# ─── Path normalizer ──────────────────────────────────────────────────────────
+# Starlette's Mount issues a 307 redirect for "/mcp" -> "/mcp/". Many MCP clients
+# (including AIPI) POST to "/mcp" without a trailing slash and do NOT follow the
+# redirect, so the connection silently fails. This ASGI wrapper rewrites the path
+# to "/mcp/" transparently so the request reaches the transport with no redirect.
+class PathNormalizer:
+    def __init__(self, application):
+        self.application = application
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") == "http" and scope.get("path") in ("/mcp", "/messages"):
+            scope = dict(scope)
+            new_path = scope["path"] + "/"
+            scope["path"] = new_path
+            if scope.get("raw_path"):
+                scope["raw_path"] = new_path.encode()
+        await self.application(scope, receive, send)
+
+asgi_app = PathNormalizer(app)
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print(f"✅ MCP Web Search server on port {PORT}")
     print(f"   Health:      GET  http://0.0.0.0:{PORT}/")
-    print(f"   SSE:         GET  http://0.0.0.0:{PORT}/sse")
     print(f"   Streamable:  POST http://0.0.0.0:{PORT}/mcp")
+    print(f"   SSE:         GET  http://0.0.0.0:{PORT}/sse")
     print(f"   Provider:    {'Serper.dev' if SERPER_API_KEY else 'DuckDuckGo (no key set)'}")
+    print(f"   Auth:        {'ENABLED (MCP_API_KEY set)' if MCP_API_KEY else 'disabled'}")
     uvicorn.run(
-        app,
+        asgi_app,
         host="0.0.0.0",
         port=PORT,
         log_level="info",
-        # Force HTTP/1.1 — prevents Cloudflare/Render from buffering SSE via HTTP/2
-        http="h11",
+        http="h11",  # force HTTP/1.1 — prevents Cloudflare/Render buffering SSE via HTTP/2
     )
