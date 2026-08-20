@@ -18,6 +18,7 @@ from starlette.responses import Response, JSONResponse
 from starlette.requests import Request
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
 # ─── Configuration ────────────────────────────────────────────────────────────
@@ -203,6 +204,45 @@ async def health(request: Request) -> JSONResponse:
         "tools": ["web_search", "fetch_page"],
     })
 
+# ─── API Key Authentication ───────────────────────────────────────────────────
+class ApiKeyMiddleware(BaseHTTPMiddleware):
+    """
+    Optional API key authentication.
+    Only enforced when the MCP_API_KEY environment variable is set.
+    Accepts the key via any of:
+      - Authorization: Bearer <key>
+      - X-API-Key: <key>
+      - ?api_key=<key>  query parameter (for SSE clients that can't send headers)
+    The health check (GET /) and CORS preflight (OPTIONS) are always allowed.
+    """
+    async def dispatch(self, request: Request, call_next):
+        # No key configured → auth disabled, allow everything
+        if not MCP_API_KEY:
+            return await call_next(request)
+
+        # Always allow health check and CORS preflight
+        if request.url.path == "/" or request.method == "OPTIONS":
+            return await call_next(request)
+
+        # Extract provided key from header or query param
+        provided = None
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            provided = auth[7:].strip()
+        if not provided:
+            provided = request.headers.get("x-api-key", "").strip() or None
+        if not provided:
+            provided = request.query_params.get("api_key")
+
+        if provided != MCP_API_KEY:
+            return JSONResponse(
+                {"jsonrpc": "2.0", "id": None,
+                 "error": {"code": -32001, "message": "Unauthorized: invalid or missing API key"}},
+                status_code=401,
+            )
+
+        return await call_next(request)
+
 # ─── Starlette App ────────────────────────────────────────────────────────────
 app = Starlette(
     debug=False,
@@ -219,7 +259,8 @@ app = Starlette(
             allow_methods=["*"],
             allow_headers=["*"],
             expose_headers=["mcp-session-id", "Mcp-Session-Id"],
-        )
+        ),
+        Middleware(ApiKeyMiddleware),
     ],
 )
 
