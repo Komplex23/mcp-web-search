@@ -1,9 +1,2 @@
 # Auto detect text files and perform LF normalization
 * text=auto
-cd mcp-web-search
-git init
-git add .
-git commit -m "Initial commit"
-# create a repo on github.com, then:
-git remote add origin https://github.com/YOUR_USERNAME/mcp-web-search.git
-git push -u origin main
