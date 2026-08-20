@@ -8,10 +8,10 @@ services:
     envVars:
       - key: PORT
         value: 3000
-      # ── Required for Brave Search (recommended) ──────────────────────────
-      # Get a free key at https://brave.com/search/api/
+      # ── Required for Serper.dev (recommended) ────────────────────────────
+      # Get a free key at https://serper.dev/ (2,500 searches/month free)
       # Leave blank to use the DuckDuckGo fallback instead.
-      - key: BRAVE_API_KEY
+      - key: SERPER_API_KEY
         sync: false
       # ── Optional: protect your MCP server with an API key ────────────────
       - key: MCP_API_KEY

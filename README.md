@@ -38,7 +38,7 @@ git push -u origin main
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `BRAVE_API_KEY` | Recommended | Get free at [brave.com/search/api](https://brave.com/search/api/) — 2,000 queries/month free |
+| `SERPER_API_KEY` | Recommended | Get free at [serper.dev](https://serper.dev/) — 2,500 queries/month free (Google results) |
 | `MCP_API_KEY` | Optional | Set to any secret string to password-protect your server |
 
 5. Click **Create Web Service** — Render will build and deploy automatically.
@@ -99,10 +99,10 @@ Claude Desktop `claude_desktop_config.json`:
 
 | Provider | Key required | Quality | Limit |
 |----------|-------------|---------|-------|
-| **Brave Search** | Yes (free) | ⭐⭐⭐⭐⭐ | 2,000 queries/month free |
+| **Serper.dev** | Yes (free) | ⭐⭐⭐⭐⭐ | 2,500 queries/month free (Google results) |
 | **DuckDuckGo** | No | ⭐⭐⭐ | Unlimited (fallback) |
 
-Set `BRAVE_API_KEY` in Render env vars to use Brave. The server falls back to DuckDuckGo automatically if the key is absent.
+Set `SERPER_API_KEY` in Render env vars to use Serper. The server falls back to DuckDuckGo automatically if the key is absent.
 
 ---
 
@@ -111,7 +111,7 @@ Set `BRAVE_API_KEY` in Render env vars to use Brave. The server falls back to Du
 ```bash
 npm install
 npm run build
-BRAVE_API_KEY=your_key npm start
+SERPER_API_KEY=your_key npm start
 ```
 
 Health check:

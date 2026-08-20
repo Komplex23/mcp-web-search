@@ -6,7 +6,7 @@ import { z } from "zod";
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || "3000", 10);
-const BRAVE_API_KEY = process.env.BRAVE_API_KEY || "";
+const SERPER_API_KEY = process.env.SERPER_API_KEY || "";
 const API_KEY = process.env.MCP_API_KEY || ""; // Optional: protect your server
 
 // ─── Web Search Functions ─────────────────────────────────────────────────────
@@ -17,29 +17,32 @@ interface SearchResult {
   description: string;
 }
 
-/** Brave Search API */
-async function braveSearch(
+/** Serper.dev API (Google results, 2,500 free searches/month) */
+async function serperSearch(
   query: string,
   count: number = 5
 ): Promise<SearchResult[]> {
-  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`;
-  const resp = await fetch(url, {
+  const resp = await fetch("https://google.serper.dev/search", {
+    method: "POST",
     headers: {
-      Accept: "application/json",
-      "Accept-Encoding": "gzip",
-      "X-Subscription-Token": BRAVE_API_KEY,
+      "X-API-KEY": SERPER_API_KEY,
+      "Content-Type": "application/json",
     },
+    body: JSON.stringify({
+      q: query,
+      num: count,
+    }),
   });
   if (!resp.ok) {
-    throw new Error(`Brave Search API error: ${resp.status} ${resp.statusText}`);
+    throw new Error(`Serper API error: ${resp.status} ${resp.statusText}`);
   }
   const data = (await resp.json()) as {
-    web?: { results?: Array<{ title: string; url: string; description: string }> };
+    organic?: Array<{ title: string; link: string; snippet: string }>;
   };
-  return (data.web?.results || []).map((r) => ({
+  return (data.organic || []).map((r) => ({
     title: r.title || "",
-    url: r.url || "",
-    description: r.description || "",
+    url: r.link || "",
+    description: r.snippet || "",
   }));
 }
 
@@ -106,8 +109,8 @@ async function duckduckgoSearch(
 
 /** Route to appropriate search provider */
 async function webSearch(query: string, count: number = 5): Promise<SearchResult[]> {
-  if (BRAVE_API_KEY) {
-    return braveSearch(query, count);
+  if (SERPER_API_KEY) {
+    return serperSearch(query, count);
   }
   return duckduckgoSearch(query, count);
 }
@@ -240,7 +243,7 @@ app.get("/", (_req: Request, res: Response) => {
     name: "mcp-web-search",
     version: "1.0.0",
     transport: ["SSE (/sse)", "Streamable HTTP (/mcp)"],
-    searchProvider: BRAVE_API_KEY ? "Brave Search" : "DuckDuckGo (fallback)",
+    searchProvider: SERPER_API_KEY ? "Serper.dev (Google results)" : "DuckDuckGo (fallback)",
     tools: ["web_search", "fetch_page"],
   });
 });
@@ -327,6 +330,6 @@ app.listen(PORT, () => {
   console.log(`   SSE (legacy):    GET  http://localhost:${PORT}/sse`);
   console.log(`   Streamable HTTP: POST http://localhost:${PORT}/mcp`);
   console.log(
-    `   Search provider: ${BRAVE_API_KEY ? "Brave Search" : "DuckDuckGo (set BRAVE_API_KEY to upgrade)"}`
+    `   Search provider: ${SERPER_API_KEY ? "Serper.dev (Google results)" : "DuckDuckGo (set SERPER_API_KEY to upgrade)"}`
   );
 });
