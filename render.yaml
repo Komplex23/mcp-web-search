@@ -1,9 +1,11 @@
 services:
   - type: web
     name: mcp-web-search
-    env: docker
+    env: python
     region: oregon          # change to: singapore | frankfurt | ohio
     plan: free              # upgrade to starter ($7/mo) to avoid spin-down
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
     healthCheckPath: /
     envVars:
       - key: PORT
