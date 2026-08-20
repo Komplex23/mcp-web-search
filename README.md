@@ -2,9 +2,7 @@
 
 A **Model Context Protocol (MCP) server** that provides web search capabilities, deployable on [Render](https://render.com).
 
-Supports both transport formats:
-- **SSE** (Server-Sent Events) — legacy, compatible with Claude Desktop
-- **Streamable HTTP** — MCP 2025-03-26 spec, used by modern clients (AIPI, etc.)
+Built with **Python** using the official MCP SDK, supporting **SSE (Server-Sent Events)** transport for maximum compatibility with MCP clients like AIPI, Claude Desktop, and others.
 
 ## Tools exposed
 
@@ -47,51 +45,38 @@ Your server URL will be: `https://mcp-web-search.onrender.com` (or similar)
 
 ---
 
-## 🔌 Connect to AIPI (or any MCP client)
+## 🔌 Connect to AIPI
 
-### Streamable HTTP (recommended for AIPI)
+In AIPI's "Add Custom MCP" dialog, paste this configuration:
 
-```
-URL:  https://YOUR-SERVICE.onrender.com/mcp
-```
-
-Add to your MCP client config:
-```json
-{
-  "mcpServers": {
-    "web-search": {
-      "type": "streamable-http",
-      "url": "https://YOUR-SERVICE.onrender.com/mcp",
-      "headers": {
-        "x-api-key": "YOUR_MCP_API_KEY"
-      }
-    }
-  }
-}
-```
-
-### SSE (legacy / Claude Desktop)
-
-```
-URL:  https://YOUR-SERVICE.onrender.com/sse
-```
-
-Claude Desktop `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
     "web-search": {
       "type": "sse",
-      "url": "https://YOUR-SERVICE.onrender.com/sse",
-      "headers": {
-        "x-api-key": "YOUR_MCP_API_KEY"
-      }
+      "url": "https://YOUR-SERVICE.onrender.com/sse"
     }
   }
 }
 ```
 
-> **Tip:** If `MCP_API_KEY` is not set, omit the `headers` field entirely.
+Replace `YOUR-SERVICE` with your actual Render service name (e.g., `mcp-web-search-j73g`).
+
+### Other MCP Clients
+
+Works with any MCP client that supports SSE transport:
+
+**Claude Desktop** (`claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "web-search": {
+      "type": "sse",
+      "url": "https://YOUR-SERVICE.onrender.com/sse"
+    }
+  }
+}
+```
 
 ---
 
@@ -109,9 +94,8 @@ Set `SERPER_API_KEY` in Render env vars to use Serper. The server falls back to 
 ## 🧪 Test locally
 
 ```bash
-npm install
-npm run build
-SERPER_API_KEY=your_key npm start
+pip install -r requirements.txt
+SERPER_API_KEY=your_key python server.py
 ```
 
 Health check:
@@ -119,21 +103,7 @@ Health check:
 curl http://localhost:3000/
 ```
 
-Test Streamable HTTP:
-```bash
-curl -X POST http://localhost:3000/mcp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "initialize",
-    "params": {
-      "protocolVersion": "2024-11-05",
-      "capabilities": {},
-      "clientInfo": { "name": "test", "version": "1.0" }
-    }
-  }'
-```
+The server runs on port 3000 by default. Set `PORT` environment variable to change it.
 
 ---
 
