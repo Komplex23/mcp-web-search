@@ -16,6 +16,8 @@ from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 from starlette.responses import Response, JSONResponse
 from starlette.requests import Request
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 import uvicorn
 
 # ─── Configuration ────────────────────────────────────────────────────────────
@@ -209,6 +211,15 @@ app = Starlette(
         Route("/sse",      handle_sse,      methods=["GET"]),
         Mount("/messages/", app=sse.handle_post_message),
         Route("/mcp",      handle_mcp_post, methods=["POST"]),
+    ],
+    middleware=[
+        Middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=["mcp-session-id", "Mcp-Session-Id"],
+        )
     ],
 )
 
