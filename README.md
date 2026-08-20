@@ -2,7 +2,7 @@
 
 A **Model Context Protocol (MCP) server** that provides web search capabilities, deployable on [Render](https://render.com).
 
-Built with **Python** using the official MCP SDK, supporting **SSE (Server-Sent Events)** transport for maximum compatibility with MCP clients like AIPI, Claude Desktop, and others.
+Built with **Python** using the official MCP SDK, supporting **SSE (Server-Sent Events)** and **Streamable HTTP** transports for AIPI.
 
 ## Tools exposed
 
@@ -47,36 +47,28 @@ Your server URL will be: `https://mcp-web-search.onrender.com` (or similar)
 
 ## 🔌 Connect to AIPI
 
-In AIPI's "Add Custom MCP" dialog, paste this configuration:
+In AIPI's **Add Custom MCP** screen, use this **flat** configuration (no wrapper object):
 
+**SSE:**
 ```json
 {
-  "mcpServers": {
-    "web-search": {
-      "type": "sse",
-      "url": "https://YOUR-SERVICE.onrender.com/sse"
-    }
-  }
+  "url": "https://mcp-web-search-j73g.onrender.com/sse",
+  "name": "web-search",
+  "type": "sse"
 }
 ```
 
-Replace `YOUR-SERVICE` with your actual Render service name (e.g., `mcp-web-search-j73g`).
-
-### Other MCP Clients
-
-Works with any MCP client that supports SSE transport:
-
-**Claude Desktop** (`claude_desktop_config.json`):
+**Streamable HTTP:**
 ```json
 {
-  "mcpServers": {
-    "web-search": {
-      "type": "sse",
-      "url": "https://YOUR-SERVICE.onrender.com/sse"
-    }
-  }
+  "url": "https://mcp-web-search-j73g.onrender.com/mcp",
+  "name": "web-search",
+  "type": "streamable"
 }
 ```
+
+Replace the host with your actual Render service URL if different. AIPI uses a flat
+`url` / `name` / `type` object — it does **not** use a `mcpServers` wrapper.
 
 ---
 

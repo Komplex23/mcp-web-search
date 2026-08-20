@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 MCP Web Search Server
-Exposes two spec-compliant remote transports so it works with AIPI, Claude, Cursor, etc.:
+Exposes two spec-compliant remote transports for AIPI:
   - Streamable HTTP (recommended)  ->  POST/GET/DELETE  /mcp
   - SSE (legacy/deprecated)        ->  GET /sse  +  POST /messages/
 Tools: web_search, fetch_page
