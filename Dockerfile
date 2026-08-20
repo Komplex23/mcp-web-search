@@ -1,19 +1,14 @@
-FROM node:20-alpine
+FROM python:3.11-slim
 
 WORKDIR /app
 
 # Install dependencies
-COPY package*.json ./
-RUN npm ci --omit=dev --ignore-scripts
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source and build
-COPY tsconfig.json ./
-COPY src/ ./src/
-RUN npm install typescript --save-dev && npx tsc
-
-# Remove devDependencies after build
-RUN npm prune --omit=dev
+# Copy server
+COPY server.py .
 
 EXPOSE 3000
 
-CMD ["node", "dist/index.js"]
+CMD ["python", "server.py"]
