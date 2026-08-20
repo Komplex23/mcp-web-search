@@ -7,7 +7,3 @@ git commit -m "Initial commit"
 # create a repo on github.com, then:
 git remote add origin https://github.com/YOUR_USERNAME/mcp-web-search.git
 git push -u origin main
-
-git add Dockerfile render.yaml
-git commit -m "Add Dockerfile for Render deployment"
-git push
