@@ -2,7 +2,6 @@ import express, { Request, Response } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 // ─── Configuration ───────────────────────────────────────────────────────────
@@ -273,59 +272,52 @@ app.post("/messages", authMiddleware, async (req: Request, res: Response) => {
 });
 
 // ── Streamable HTTP transport (MCP 2025-03-26 spec) ──────────────────────────
-// Each session gets its own server + transport
-const streamableTransports: Record<string, StreamableHTTPServerTransport> = {};
-
+// STATELESS mode: every POST is self-contained — no mcp-session-id round-trip
+// required. This is the most compatible mode for hosted clients (AIPI, n8n,
+// serverless, etc.) that don't persist the session header between requests.
 app.post("/mcp", authMiddleware, async (req: Request, res: Response) => {
-  // Check for existing session
-  const sessionId = req.headers["mcp-session-id"] as string | undefined;
+  try {
+    const server = createMcpServer();
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined, // stateless — no session id issued
+    });
 
-  if (sessionId && streamableTransports[sessionId]) {
-    // Route to existing session
-    const transport = streamableTransports[sessionId];
+    // Clean up when the response closes
+    res.on("close", () => {
+      transport.close();
+      server.close();
+    });
+
+    await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
-    return;
+  } catch (err) {
+    console.error("Error handling /mcp POST:", err);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: { code: -32603, message: "Internal server error" },
+        id: null,
+      });
+    }
   }
+});
 
-  // New session — must be an InitializeRequest
-  if (!isInitializeRequest(req.body)) {
-    res.status(400).json({ error: "Must send initialize request first" });
-    return;
-  }
-
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => crypto.randomUUID(),
-    onsessioninitialized: (sid) => {
-      streamableTransports[sid] = transport;
-    },
+// In stateless mode, GET (server-initiated SSE stream) and DELETE (session
+// teardown) are not applicable — respond with 405 so clients fall back cleanly.
+app.get("/mcp", authMiddleware, (_req: Request, res: Response) => {
+  res.status(405).json({
+    jsonrpc: "2.0",
+    error: { code: -32000, message: "Method not allowed (stateless server)." },
+    id: null,
   });
-
-  transport.onclose = () => {
-    const sid = transport.sessionId;
-    if (sid) delete streamableTransports[sid];
-  };
-
-  const server = createMcpServer();
-  await server.connect(transport);
-  await transport.handleRequest(req, res, req.body);
 });
 
-app.get("/mcp", authMiddleware, async (req: Request, res: Response) => {
-  const sessionId = req.headers["mcp-session-id"] as string | undefined;
-  if (!sessionId || !streamableTransports[sessionId]) {
-    res.status(404).json({ error: "Session not found" });
-    return;
-  }
-  await streamableTransports[sessionId].handleRequest(req, res);
-});
-
-app.delete("/mcp", authMiddleware, async (req: Request, res: Response) => {
-  const sessionId = req.headers["mcp-session-id"] as string | undefined;
-  if (!sessionId || !streamableTransports[sessionId]) {
-    res.status(404).json({ error: "Session not found" });
-    return;
-  }
-  await streamableTransports[sessionId].handleRequest(req, res);
+app.delete("/mcp", authMiddleware, (_req: Request, res: Response) => {
+  res.status(405).json({
+    jsonrpc: "2.0",
+    error: { code: -32000, message: "Method not allowed (stateless server)." },
+    id: null,
+  });
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
